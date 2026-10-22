@@ -14,12 +14,3 @@ REASON: <one short fact, with file:line where possible>
 VERDICT: PASS
 or
 VERDICT: FAIL
-
-Before you run it
-
-- Line endings. Save qa.sh as LF. The *.sh text eol=lf rule is already in .gitattributes, but your editor may still save CRLF into the file.
-- Prompt file. Check that prompts/qa.md has no backslash escapes and nothing beyond the prompt, as with builder.md.
-- First run. Run bash scripts/qa.sh --dry-run 3, then send me the output.
-- Real run. A real run uses tokens, and it changes labels and comments on a public repo, just like the build lane did.
-
-I haven't written or run anything.

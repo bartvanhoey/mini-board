@@ -40,7 +40,7 @@ for cmd in git gh claude dotnet; do
   command -v "$cmd" >/dev/null || { echo "missing tool: $cmd" >&2; exit 69; }
 done
 [ -f "$PROMPT_FILE" ] || { echo "missing file: $PROMPT_FILE" >&2; exit 66; }
-gh auth status >/dev/null 2>&1 || { echo "gh is not logged in" >&2; exit 6
+gh auth status >/dev/null 2>&1 || { echo "gh is not logged in" >&2; exit 69; }
 
 mkdir -p "$LOG_DIR"
 mkdir "$LOCK" 2>/dev/null || { echo "another run holds $LOCK" >&2; exit 75; }
@@ -52,7 +52,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# --- pick ---------------------------------------------------------------
+# --- pick --------------------------------------------------------------------
 if [ -z "$ISSUE" ]; then
   ISSUE="$(gh issue list --label qa --state open --json number \
     --jq 'sort_by(.number) | .[0].number // empty')"
@@ -60,13 +60,13 @@ if [ -z "$ISSUE" ]; then
 fi
 
 LABELS="$(gh issue view "$ISSUE" --json labels --jq '.labels[].name')"
-grep -qx qa <<<"$LABELS" || { echo "issue #$ISSUE is not labelled qa" >&2;
+grep -qx qa <<<"$LABELS" || { echo "issue #$ISSUE is not labelled qa" >&2; exit 65; }
 
 TITLE="$(gh issue view "$ISSUE" --json title --jq .title)"
 BODY="$(gh issue view "$ISSUE" --json body --jq .body)"
 
 BRANCH="issue-$ISSUE"
-PR="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].nu
+PR="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')"
 [ -n "$PR" ] || { echo "no open PR for branch $BRANCH" >&2; exit 65; }
 
 git fetch -q origin "$BRANCH"
@@ -100,7 +100,7 @@ if (( DRY_RUN )); then
   exit 0
 fi
 
-# --- isolate ------------------------------------------------------------
+# --- isolate -----------------------------------------------------------------
 WT="$WT_ROOT/qa-$BRANCH"
 mkdir -p "$WT_ROOT"
 git worktree add --detach "$WT" "$SHA" >/dev/null
@@ -116,7 +116,7 @@ elif ! ( cd "$WT" && dotnet test "$SOLUTION" --nologo -v q --no-build ) >>"$LOG"
 fi
 
 # --- agent review (read-only) ------------------------------------------------
-PROMPT="$(cat "$PROMPT_FILE"; printf '\n\n## Issue #%s: %s\n\n%s\n' "$ISSUE
+PROMPT="$(cat "$PROMPT_FILE"; printf '\n\n## Issue #%s: %s\n\n%s\n' "$ISSUE" "$TITLE" "$BODY")"
 say "qa agent running; log: $AGENT_OUT"
 ( cd "$WT" && claude -p "$PROMPT" \
     --max-turns "$MAX_TURNS" \
@@ -124,11 +124,11 @@ say "qa agent running; log: $AGENT_OUT"
       "Bash(git diff:*)" "Bash(git log:*)" "Bash(git status:*)" "Bash(dotnet:*)"
 ) >"$AGENT_OUT" 2>>"$LOG" || inconclusive "qa agent exited with an error"
 
-# --- decide -------------------------------------------------------------
+# --- decide ------------------------------------------------------------------
 git fetch -q origin "$BRANCH"
-[ "$(git rev-parse "origin/$BRANCH")" = "$SHA" ] || inconclusive "branch m
+[ "$(git rev-parse "origin/$BRANCH")" = "$SHA" ] || inconclusive "branch moved while qa ran"
 
-VERDICT="$(tr -d '\r' <"$AGENT_OUT" | grep -E '^VERDICT: (PASS|FAIL)$' | te)"
+VERDICT="$(tr -d '\r' <"$AGENT_OUT" | grep -E '^VERDICT: (PASS|FAIL)$' | tail -1 | cut -d' ' -f2 || true)"
 REASONS="$(tr -d '\r' <"$AGENT_OUT" | sed -n 's/^REASON: /- /p' | head -5 | cut -c1-300 || true)"
 [ -n "$VERDICT" ] || inconclusive "agent gave no VERDICT line"
 
@@ -142,5 +142,5 @@ fi
 
 say "PASS -> review"
 act gh issue edit "$ISSUE" --remove-label qa --add-label review
-act gh pr comment "$PR" --body "$(printf '[qa] pass at %s\nDid: dotnet buiDone:\n%s\nNext: review.' "$SHORT" "$REASONS")"
+act gh pr comment "$PR" --body "$(printf '[qa] pass at %s\nDid: dotnet build + test, agent review.\n✅ Done:\n%s\nNext: review.' "$SHORT" "$REASONS")"
 say "done"
